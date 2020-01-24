@@ -1,11 +1,8 @@
 library(quantmod)
 library(TTR)
+library(PerformanceAnalytics)
 
-getData <- function(symbol) {
-  
-}
-
-# strategy_func is a function that processes receives data as xts object
+# strategy_func is a function that receives data as xts object
 # and returns xts object of signals
 calculate_strategy <- function(strategy_func, data) {
   signals <- strategy_func(data)
@@ -25,7 +22,7 @@ SampleData <- setRefClass(
     out_of_sample_data = "xts"
   ),
   methods = list(
-    # must call this method first before other methods which use 
+    # must call this method first before other methods which use
     # in_sample_data or out_of_sample_data
     populate_sample_data = function() {
       in_sample_data <<- window(data,
@@ -52,14 +49,14 @@ momentum_strategy_1 <- function(data) {
     nFast = 12,
     nSlow = 26,
     nSig = 9,
-    maType = "EMA",
-    percent = T
+    maType = "SMA",
+    percent = F
   )
   
   bb <-
     BBands(data,
            n = 20,
-           maType = "EMA",
+           maType = "SMA",
            sd = 2)
   
   signal <-
@@ -72,6 +69,8 @@ momentum_strategy_1 <- function(data) {
              0)
     )
   
+  signal <- na.omit(signal)
+  
   return(signal)
 }
 
@@ -82,17 +81,28 @@ getTicker <- function(symbol, start, end) {
                auto.assign = F)
   
   data <- window(data,
-                  start = start,
-                  end = end)
+                 start = start,
+                 end = end)
   
   # uses adjusted prices
   data <- Ad(data)
   
   # forward fill NA
   data <- na.locf(data)
+  
+  names(data)[1] <- "adj"
+  
+  return(data)
+}
+
+get_returns <- function(data) {
+  returns <- Delt(data)
+  returns[1] <- 0
+  return(returns)
 }
 
 Nifty <- getTicker("^NSEI", "2010-01-01", "2019-12-31")
+Nifty$returns <- get_returns(Nifty)
 
 NiftySampleData <- SampleData$new(
   data = Nifty,
@@ -102,4 +112,16 @@ NiftySampleData <- SampleData$new(
   out_ed = "2019-12-31"
 )
 
-NiftySampleData$calculate_strategy_on_in_sample(momentum_strategy_1)
+NiftySampleData$populate_sample_data()
+
+in_sample_signals <-
+  NiftySampleData$calculate_strategy_on_in_sample(momentum_strategy_1)
+
+in_sample_returns <-
+  Nifty_returns * lag(in_sample_signals)
+
+in_sample_returns <- na.omit(in_sample_returns)
+
+Return.cumulative(in_sample_returns)
+
+

@@ -85,6 +85,49 @@ MultipleStrategyCSVSummarizer <- R6Class(
   )
 )
 
+# based off https://www.r-bloggers.com/volume-by-price-charts-using-r/
+volume_by_price <- function(ticker_data) {
+  #Add Positive and Negative Volumes
+  ticker_data$positive_VbP <-
+    Vo(ticker_data[which(Lag(Cl(ticker_data)) <=
+                           Cl(ticker_data))])
+  
+  ticker_data$negative_vbP <-
+    Vo(ticker_data[which(Lag(Cl(ticker_data)) >
+                           Cl(ticker_data))])
+  
+  # Since NAs got generated, replace NAs with 0
+  ticker_data[is.na(ticker_data)] <- 0
+  
+  # Divisor for security
+  div <- 1
+  
+  #Identify High and low of Series, as mutiple of div
+  high <- as.integer(ceiling(max(Cl(ticker_data)) / div) * div)
+  low <- as.integer(floor(min(Cl(ticker_data)) / div) * div)
+  
+  # Breaks of interval divisor
+  breaks <- as.integer(seq(low, high, by = div))
+  
+  # Identify and assign price intervals
+  ticker_data$t <-
+    breaks[findInterval(ticker_data$close, breaks, all.inside = T)]
+  
+  # Add Positive / Negative Volumes to block
+  volsP <- unlist(lapply(breaks, function(x) {
+    sum(ticker_data$positive_VbP[ticker_data$t == x])
+  }))
+  volsN <- unlist(lapply(breaks, function(x) {
+    sum(ticker_data$negative_vbP[ticker_data$t == x])
+  }))
+  
+  #Bind the Positive and Negative Volumes
+  vols <- rbind(volsP, volsN)
+  colnames(vols) <- breaks
+  
+  return(vols)
+}
+
 volume_momentum_strategy_1 <- function(ticker_data) {
   ticker_data$volume
   
@@ -143,7 +186,82 @@ getTicker <- function(symbol, start, end) {
   return(data)
 }
 
+volume_price_trend_indicator <- function(ticker_data) {
+  
+  ticker_data$price_increase <- rep(NA, times=nrow(ticker_data))
+  
+  for (i in 2:nrow(ticker_data)) {
+    previous_data <- as.numeric( Cl(ticker_data)[i-1] )
+    current_data <- as.numeric( Cl(ticker_data)[i] )
+    
+    if (previous_data <  current_data) {
+      ticker_data$price_increase[i] <- 1
+    } else if (previous_data > current_data) {
+      ticker_data$price_increase[i] <- -1
+    } else {
+      ticker_data$price_increase[i] <- 0
+    }
+  }
+  
+  ticker_data$volume_price_trend <- rep(NA, times=nrow(ticker_data))
+  ticker_data$volume_price_trend[1] <- 1
+  
+  for (i in 2:nrow(ticker_data)) {
+    previous_data <- ticker_data[i-1]
+    current_data <- ticker_data[i]
+    
+    previous_close <- as.numeric(Cl(previous_data))
+    current_close <- as.numeric(Cl(current_data))
+    
+    if (abs(as.numeric(current_data$price_increase)) == 1) {
+      percent_close_change <- (current_close - previous_close) / previous_close
+      ticker_data$volume_price_trend[i] <- 
+        percent_close_change * 
+        previous_close +
+        previous_data$volume_price_trend
+    } else {
+      ticker_data$volume_price_trend[i] <- previous_data$volume_price_trend
+    }
+  }
+  
+  return(ticker_data$volume_price_trend)
+}
+
 spy <- getTicker("SPY", "2010-01-01", "2019-12-31")
+start_date <- index(spy)[1]+100
+spy_window <- spy[start_date <= index(spy) &
+                    index(spy) < (start_date + 50)]
+vbp <-
+  volume_by_price(spy_window)
+
+ticker_data <- Cl(spy_window)
+
+# start vbp plot function
+plot(ticker_data,
+     yaxt="n", 
+     ylab="",
+     xlab="Time",
+     ylim=c(min(as.integer(colnames(vbp))),
+            max(as.integer(colnames(vbp)))),
+     main=paste("Close: Volume by Price"),
+     sub="Market Analyzer http://mypapertrades.blogspot.com/")
+
+par(new=T)
+
+barplot(height=vbp, 
+        beside=F,
+        horiz=T, 
+        col=c(rgb(0,1,0,alpha=.3),
+              rgb(1,0,0,alpha=.3)),
+        xlim=c(0,max(vbp[1,]+vbp[2,])*1.1), 
+        space=10, 
+        width=3,
+        xaxt="n",
+        yaxt="n",
+        las=2)
+
+par(new=F)
+# end plot vbp function
 
 spy_in_sample <- window(spy,
                         start = "2010-01-01",
@@ -160,7 +278,6 @@ strat_in_sample <-
   StrategySummarizer$new(spy$close, spy_in_sample$signals)
 strat_out_sample <-
   StrategySummarizer$new(spy$close, spy_out_sample$signals)
-
 
 multiStratCsvSummarizer <-
   MultipleStrategyCSVSummarizer$new(c(strat_in_sample, strat_out_sample),

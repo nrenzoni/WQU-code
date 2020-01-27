@@ -235,7 +235,7 @@ generate_signal_on_ma_crossover <-
     ma_slow <- rollmean(in_data, ma_slow_period)
     ma_fast <- rollmean(in_data, ma_fast_period)
     
-    signals <- ifelse(
+    in_data$signals <- ifelse(
       ma_fast > ma_slow &
         Lag(ma_fast) <= Lag(ma_slow),
       1,
@@ -243,7 +243,7 @@ generate_signal_on_ma_crossover <-
                Lag(ma_fast) >= Lag(ma_slow), -1 , 0)
     )
     
-    return(signals)
+    return(in_data$signals)
   }
 
 adx_above_n_and_positive_slope <- function(in_data, n) {
@@ -288,7 +288,7 @@ volume_trend_strategy_1 <-
     vpt_booleans <- volume_trend_vpt(ticker_data, n1, n2, n3)
     
     # default signal is 0, i.e. do not buy/sell
-    signals <- rep(0, nrow(ticker_data))
+    ticker_data$signals <- rep(0, nrow(ticker_data))
     
     for (i in n2:nrow(ticker_data)) {
       if (vpt_booleans[i]) {
@@ -302,17 +302,20 @@ volume_trend_strategy_1 <-
         slope <- get_slope_of_sma_n(current_data, n5)
         
         # if slope is positive, buy, else sell
-        signals[i] <- ifelse(slope >= 0, 1, -1)
+        ticker_data$signals[i] <- ifelse(slope >= 0, 1, -1)
       }
     }
     
-    return(signals)
+    return(ticker_data$signals)
   }
 
 spy <- getTicker("SPY", "2010-01-01", "2019-12-31")
 
 signals <- volume_trend_strategy_1(spy, 10, 50, .1, 35, 5)
 
+strat1 <- StrategySummarizer$new(Cl(spy), signals)
+strat1$get_headers()
+strat1$get_summarized_data()
 
 start_date <- index(spy)[1]+100
 spy_window <- spy[start_date <= index(spy) &

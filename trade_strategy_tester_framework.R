@@ -128,14 +128,6 @@ volume_by_price <- function(ticker_data) {
   return(vols)
 }
 
-volume_momentum_strategy_1 <- function(ticker_data) {
-  ticker_data$volume
-  
-  signal
-  
-  return(signal)
-}
-
 momentum_strategy_1 <- function(ticker_data) {
   macd <- MACD(
     ticker_data,
@@ -227,7 +219,101 @@ volume_price_trend_indicator <- function(ticker_data) {
   return(ticker_data$volume_price_trend)
 }
 
+get_slope_of_points <- function(points) {
+  y <- as.numeric(points)
+  x <- 1:length(y)
+  
+  reg <- lm( y ~ x )
+  
+  slope <- reg$coefficients[2]
+  
+  return(slope)
+}
+
+generate_signal_on_ma_crossover <-
+  function(in_data, ma_slow_period, ma_fast_period) {
+    ma_slow <- rollmean(in_data, ma_slow_period)
+    ma_fast <- rollmean(in_data, ma_fast_period)
+    
+    signals <- ifelse(
+      ma_fast > ma_slow &
+        Lag(ma_fast) <= Lag(ma_slow),
+      1,
+      ifelse(ma_fast < ma_slow &
+               Lag(ma_fast) >= Lag(ma_slow), -1 , 0)
+    )
+    
+    return(signals)
+  }
+
+adx_above_n_and_positive_slope <- function(in_data, n) {
+  adx_all <- ADX(in_data)$ADX
+  adx_last <- as.numeric(adx_all[nrow(adx_all)])
+  condition <- ((adx_last > n) & get_slope_of_points(in_data) > 0)
+  return(condition)
+}
+
+
+# n1 = sma_range
+# n2 = rolling_days_range
+# n3 = slope_threshold
+# sma_range should be < rolling_days_range
+# slope_threshold should be > 0
+volume_trend_vpt <- function(ticker_data, sma_range, rolling_days_range, slope_threshold) {
+  # slope of sma(sma_range) of volume_price_indicator 
+  # of last rolling_days_range >= slope_threshold
+
+  signals <- rep(NA, nrow(ticker_data))
+  
+  for (i in rolling_days_range:nrow(ticker_data)) {
+    current_data <- ticker_data[(i-rolling_days_range+1):i]
+    vpt_indicator <- volume_price_trend_indicator(current_data)
+    sma <- rollmean(vpt_indicator, sma_range)
+    slope <- get_slope_of_points(sma)
+    
+    signals[i] <- slope >= slope_threshold
+  }
+  
+  return(signals)
+}
+
+get_slope_of_sma_n <- function(ticker_data, n) {
+  sma <- rollmean(ticker_data, n)
+  slope <- get_slope_of_points(sma)
+  return(slope)
+}
+
+volume_trend_strategy_1 <-
+  function(ticker_data, n1, n2, n3, n4, n5) {
+    vpt_booleans <- volume_trend_vpt(ticker_data, n1, n2, n3)
+    
+    # default signal is 0, i.e. do not buy/sell
+    signals <- rep(0, nrow(ticker_data))
+    
+    for (i in n2:nrow(ticker_data)) {
+      if (vpt_booleans[i]) {
+        current_data <- ticker_data[(i - n2 + 1):i]
+        
+        # only if both signals pass, perform buy / sell
+        if (!adx_above_n_and_positive_slope(current_data, n4)) {
+          next
+        }
+        
+        slope <- get_slope_of_sma_n(current_data, n5)
+        
+        # if slope is positive, buy, else sell
+        signals[i] <- ifelse(slope >= 0, 1, -1)
+      }
+    }
+    
+    return(signals)
+  }
+
 spy <- getTicker("SPY", "2010-01-01", "2019-12-31")
+
+signals <- volume_trend_strategy_1(spy, 10, 50, .1, 35, 5)
+
+
 start_date <- index(spy)[1]+100
 spy_window <- spy[start_date <= index(spy) &
                     index(spy) < (start_date + 50)]
